@@ -18,7 +18,7 @@ export async function GET(
 
   const contentType = mod.is_encrypted ? "application/octet-stream" : "application/javascript; charset=utf-8";
 
-  return new NextResponse(content, {
+  return new NextResponse(new Uint8Array(content), {
     headers: {
       "Content-Type": contentType,
       "Content-Disposition": `inline; filename="${mod.filename}"`,
