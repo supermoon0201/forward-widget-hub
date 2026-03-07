@@ -4,11 +4,10 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "BACKEND=cloudflare npx @opennextjs/cloudflare build",
+    "build:docker": "next build",
     "start": "next start",
     "lint": "eslint",
-    "build:cf": "BACKEND=cloudflare npx @opennextjs/cloudflare build",
-    "deploy:cf": "wrangler pages deploy .open-next/assets --project-name forward-widget-hub",
     "d1:init": "wrangler d1 execute forward-widget-hub-db --file=d1-schema.sql"
   },
   "dependencies": {
