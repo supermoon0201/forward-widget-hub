@@ -24,7 +24,7 @@ interface FwdIndex {
   widgets: FwdWidget[];
 }
 
-type ModuleInfo = { id: string; filename: string; title: string; version?: string; encrypted: boolean };
+type ModuleInfo = { id: string; filename: string; title: string; version?: string; encrypted: boolean; source_url?: string };
 
 async function downloadRemoteJs(url: string): Promise<{ buffer: Buffer; filename: string }> {
   const controller = new AbortController();
@@ -102,14 +102,16 @@ async function downloadAndStoreWidget(
   collectionId: string,
   db: Awaited<ReturnType<typeof getBackendDb>>,
   store: Awaited<ReturnType<typeof getBackendStore>>,
+  widgetSourceUrl?: string,
 ): Promise<ModuleInfo> {
   const dl = await downloadRemoteJs(widget.url);
   const encrypted = isEncrypted(dl.buffer);
   const meta = encrypted ? null : parseWidgetMetadata(dl.buffer.toString("utf8"));
   const moduleId = nanoid();
+  const srcUrl = widgetSourceUrl || widget.url;
   await db.prepare(
-    `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(
     moduleId, collectionId, dl.filename,
     widget.id || meta?.id || null,
@@ -118,7 +120,8 @@ async function downloadAndStoreWidget(
     widget.version || meta?.version || null,
     widget.author || meta?.author || null,
     widget.requiredVersion || meta?.requiredVersion || null,
-    dl.buffer.length, encrypted ? 1 : 0
+    dl.buffer.length, encrypted ? 1 : 0,
+    srcUrl
   );
   await store.save(collectionId, dl.filename, dl.buffer);
   return {
@@ -127,6 +130,7 @@ async function downloadAndStoreWidget(
     title: widget.title || meta?.title || dl.filename,
     version: widget.version || meta?.version,
     encrypted,
+    source_url: srcUrl,
   };
 }
 
@@ -140,7 +144,10 @@ export async function POST(request: NextRequest) {
     const collectionDesc = (formData.get("description") as string) || "";
     const collectionIcon = (formData.get("icon") as string) || "";
     const widgetMetaRaw = formData.get("widget_meta") as string | null;
-    let widgetMeta: Array<{ id?: string; title?: string; description?: string; version?: string; author?: string; requiredVersion?: string }> | null = null;
+    const sourceUrl = formData.get("source_url") as string | null;
+    const syncMode = formData.get("sync") === "true";
+    const syncCollectionId = syncMode ? (formData.get("collection_id") as string | null) : null;
+    let widgetMeta: Array<{ id?: string; title?: string; description?: string; version?: string; author?: string; requiredVersion?: string; source_url?: string }> | null = null;
     if (widgetMetaRaw) {
       try {
         widgetMeta = JSON.parse(widgetMetaRaw);
@@ -210,8 +217,8 @@ export async function POST(request: NextRequest) {
         const collectionId = nanoid();
         const slug = nanoid(10);
         await db.prepare(
-          "INSERT INTO collections (id, user_id, slug, title, description, icon_url) VALUES (?, ?, ?, ?, ?, ?)"
-        ).run(collectionId, userId, slug, fwd.title || downloaded.filename, fwd.description || "", fwd.icon || "");
+          "INSERT INTO collections (id, user_id, slug, title, description, icon_url, source_url) VALUES (?, ?, ?, ?, ?, ?, ?)"
+        ).run(collectionId, userId, slug, fwd.title || downloaded.filename, fwd.description || "", fwd.icon || "", remoteUrl);
         const fwdUrl = `${siteUrl}/api/collections/${slug}/fwd`;
 
         return createProgressStream(async (send) => {
@@ -220,7 +227,7 @@ export async function POST(request: NextRequest) {
             const widget = fwd.widgets[i];
             const fname = widget.url.split("/").pop() || "widget.js";
             send({ type: "progress", current: i + 1, total: fwd.widgets.length, filename: fname });
-            const mod = await downloadAndStoreWidget(widget, collectionId, db, store);
+            const mod = await downloadAndStoreWidget(widget, collectionId, db, store, widget.url);
             allModules.push(mod);
           }
           send({ type: "result", ...resultBase, fwdUrl, modules: allModules });
@@ -233,13 +240,13 @@ export async function POST(request: NextRequest) {
       const meta = encrypted ? null : parseWidgetMetadata(buffer.toString("utf8"));
       const collectionId = nanoid();
       const slug = nanoid(10);
-      await db.prepare("INSERT INTO collections (id, user_id, slug, title, description) VALUES (?, ?, ?, ?, ?)").run(collectionId, userId, slug, meta?.title || filename.replace(".js", ""), meta?.description || "");
+      await db.prepare("INSERT INTO collections (id, user_id, slug, title, description, source_url) VALUES (?, ?, ?, ?, ?, ?)").run(collectionId, userId, slug, meta?.title || filename.replace(".js", ""), meta?.description || "", remoteUrl);
       const fwdUrl = `${siteUrl}/api/collections/${slug}/fwd`;
       const moduleId = nanoid();
       await db.prepare(
-        `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(moduleId, collectionId, filename, meta?.id || null, meta?.title || filename.replace(".js", ""), meta?.description || "", meta?.version || null, meta?.author || null, meta?.requiredVersion || null, buffer.length, encrypted ? 1 : 0);
+        `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(moduleId, collectionId, filename, meta?.id || null, meta?.title || filename.replace(".js", ""), meta?.description || "", meta?.version || null, meta?.author || null, meta?.requiredVersion || null, buffer.length, encrypted ? 1 : 0, remoteUrl);
       await store.save(collectionId, filename, buffer);
 
       return NextResponse.json({
@@ -278,15 +285,15 @@ export async function POST(request: NextRequest) {
           const collectionId = nanoid();
           const slug = nanoid(10);
           await db.prepare(
-            "INSERT INTO collections (id, user_id, slug, title, description, icon_url) VALUES (?, ?, ?, ?, ?, ?)"
-          ).run(collectionId, userId, slug, fwd.title || file.name, fwd.description || "", fwd.icon || "");
+            "INSERT INTO collections (id, user_id, slug, title, description, icon_url, source_url) VALUES (?, ?, ?, ?, ?, ?, ?)"
+          ).run(collectionId, userId, slug, fwd.title || file.name, fwd.description || "", fwd.icon || "", sourceUrl || null);
           fwdUrl = `${siteUrl}/api/collections/${slug}/fwd`;
 
           for (const widget of fwd.widgets) {
             currentWidget++;
             const fname = widget.url.split("/").pop() || "widget.js";
             send({ type: "progress", current: currentWidget, total: totalWidgets, filename: fname });
-            const mod = await downloadAndStoreWidget(widget, collectionId, db, store);
+            const mod = await downloadAndStoreWidget(widget, collectionId, db, store, widget.url);
             allModules.push(mod);
           }
         }
@@ -304,15 +311,17 @@ export async function POST(request: NextRequest) {
             const slug = nanoid(10);
             await db.prepare("INSERT INTO collections (id, user_id, slug, title, description) VALUES (?, ?, ?, ?, ?)").run(collectionId, userId, slug, collectionTitle, collectionDesc);
           }
-          for (const file of jsFiles) {
+          for (let ji = 0; ji < jsFiles.length; ji++) {
+            const file = jsFiles[ji];
             const buffer = Buffer.from(await file.arrayBuffer());
             const encrypted = isEncrypted(buffer);
             const meta = encrypted ? null : parseWidgetMetadata(buffer.toString("utf8"));
+            const wm = widgetMeta?.[ji];
             const moduleId = nanoid();
             await db.prepare(
-              `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-            ).run(moduleId, collectionId, file.name, meta?.id || null, meta?.title || file.name.replace(".js", ""), meta?.description || "", meta?.version || null, meta?.author || null, meta?.requiredVersion || null, file.size, encrypted ? 1 : 0);
+              `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            ).run(moduleId, collectionId, file.name, meta?.id || null, meta?.title || file.name.replace(".js", ""), meta?.description || "", meta?.version || null, meta?.author || null, meta?.requiredVersion || null, file.size, encrypted ? 1 : 0, wm?.source_url || null);
             await store.save(collectionId, file.name, buffer);
             allModules.push({ id: moduleId, filename: file.name, title: meta?.title || file.name, version: meta?.version, encrypted });
           }
@@ -320,6 +329,79 @@ export async function POST(request: NextRequest) {
 
         send({ type: "result", ...resultBase, ...(fwdUrl ? { fwdUrl } : {}), modules: allModules });
       });
+    }
+
+    // Sync mode — update existing collection modules
+    if (syncMode && syncCollectionId) {
+      const col = await db.prepare("SELECT id, slug FROM collections WHERE id = ? AND user_id = ?").get(syncCollectionId, userId) as { id: string; slug: string } | undefined;
+      if (!col) {
+        return NextResponse.json({ error: "Collection not found or not owned" }, { status: 404 });
+      }
+      const collectionId = col.id;
+
+      // Update collection metadata if provided
+      if (collectionTitle) await db.prepare("UPDATE collections SET title = ?, description = ?, icon_url = ?, source_url = COALESCE(?, source_url), updated_at = unixepoch() WHERE id = ?").run(collectionTitle, collectionDesc, collectionIcon, sourceUrl, collectionId);
+
+      // Get existing modules for matching
+      const existingModules = await db.prepare("SELECT id, filename, widget_id, source_url FROM modules WHERE collection_id = ?").all(collectionId) as Array<{ id: string; filename: string; widget_id: string | null; source_url: string | null }>;
+
+      const allModules: ModuleInfo[] = [];
+      for (let i = 0; i < jsFiles.length; i++) {
+        const file = jsFiles[i];
+        const buffer = Buffer.from(await file.arrayBuffer());
+        const encrypted = isEncrypted(buffer);
+        const content = buffer.toString("utf8");
+        const meta = encrypted ? null : parseWidgetMetadata(content);
+        const wm = widgetMeta?.[i];
+        const wmSourceUrl = wm?.source_url || null;
+        const wmWidgetId = wm?.id || meta?.id || null;
+        const filename = file.name;
+
+        // Match priority: source_url → widget_id → filename
+        const matched = existingModules.find((m) =>
+          (wmSourceUrl && m.source_url === wmSourceUrl) ||
+          (wmWidgetId && m.widget_id === wmWidgetId) ||
+          m.filename === filename
+        );
+
+        if (matched) {
+          // UPDATE existing module
+          await db.prepare(
+            `UPDATE modules SET filename = ?, widget_id = ?, title = ?, description = ?, version = ?, author = ?, required_version = ?, file_size = ?, is_encrypted = ?, source_url = COALESCE(?, source_url), updated_at = unixepoch() WHERE id = ?`
+          ).run(filename,
+            wm?.id || meta?.id || matched.widget_id,
+            wm?.title || meta?.title || filename.replace(".js", ""),
+            wm?.description || meta?.description || "",
+            wm?.version || meta?.version || null,
+            wm?.author || meta?.author || null,
+            wm?.requiredVersion || meta?.requiredVersion || null,
+            file.size, encrypted ? 1 : 0,
+            wmSourceUrl,
+            matched.id);
+          await store.save(collectionId, filename, buffer);
+          allModules.push({ id: matched.id, filename, title: wm?.title || meta?.title || filename, version: wm?.version || meta?.version, encrypted, source_url: wmSourceUrl || matched.source_url || undefined });
+        } else {
+          // INSERT new module
+          const moduleId = nanoid();
+          await db.prepare(
+            `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          ).run(moduleId, collectionId, filename,
+            wm?.id || meta?.id || null,
+            wm?.title || meta?.title || filename.replace(".js", ""),
+            wm?.description || meta?.description || "",
+            wm?.version || meta?.version || null,
+            wm?.author || meta?.author || null,
+            wm?.requiredVersion || meta?.requiredVersion || null,
+            file.size, encrypted ? 1 : 0,
+            wmSourceUrl);
+          await store.save(collectionId, filename, buffer);
+          allModules.push({ id: moduleId, filename, title: wm?.title || meta?.title || filename, version: wm?.version || meta?.version, encrypted, source_url: wmSourceUrl || undefined });
+        }
+      }
+
+      const fwdUrl = `${siteUrl}/api/collections/${col.slug}/fwd`;
+      return NextResponse.json({ ...resultBase, fwdUrl, modules: allModules, synced: true });
     }
 
     // Only .js files — regular JSON response
@@ -338,7 +420,7 @@ export async function POST(request: NextRequest) {
     } else {
       collectionId = nanoid();
       collectionSlug = nanoid(10);
-      await db.prepare("INSERT INTO collections (id, user_id, slug, title, description, icon_url) VALUES (?, ?, ?, ?, ?, ?)").run(collectionId, userId, collectionSlug, collectionTitle, collectionDesc, collectionIcon);
+      await db.prepare("INSERT INTO collections (id, user_id, slug, title, description, icon_url, source_url) VALUES (?, ?, ?, ?, ?, ?, ?)").run(collectionId, userId, collectionSlug, collectionTitle, collectionDesc, collectionIcon, sourceUrl || null);
     }
 
     for (let i = 0; i < jsFiles.length; i++) {
@@ -352,8 +434,8 @@ export async function POST(request: NextRequest) {
       const filename = file.name;
 
       await db.prepare(
-        `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(moduleId, collectionId, filename,
         wm?.id || meta?.id || null,
         wm?.title || meta?.title || filename.replace(".js", ""),
@@ -361,7 +443,8 @@ export async function POST(request: NextRequest) {
         wm?.version || meta?.version || null,
         wm?.author || meta?.author || null,
         wm?.requiredVersion || meta?.requiredVersion || null,
-        file.size, encrypted ? 1 : 0);
+        file.size, encrypted ? 1 : 0,
+        wm?.source_url || sourceUrl || null);
 
       await store.save(collectionId, filename, buffer);
       allModules.push({ id: moduleId, filename, title: wm?.title || meta?.title || filename, version: wm?.version || meta?.version, encrypted });

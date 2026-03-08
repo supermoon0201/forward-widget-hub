@@ -38,11 +38,12 @@ interface FileItem {
 interface Module {
   id: string; filename: string; title: string; description: string;
   version: string; author: string; file_size: number; is_encrypted: number;
+  source_url: string | null;
 }
 
 interface Collection {
   id: string; slug: string; title: string; description: string; icon_url: string;
-  fwdUrl: string; pageUrl: string; modules: Module[];
+  fwdUrl: string; pageUrl: string; modules: Module[]; source_url: string | null;
 }
 
 async function readNdjsonStream(
@@ -99,9 +100,20 @@ export default function Home() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    fetch("/api/auth").then((r) => r.json()).then((data) => {
+    const savedToken = localStorage.getItem("fwh_token");
+    fetch("/api/auth").then((r) => r.json()).then(async (data) => {
       if (!data.required || data.authenticated) {
         setAuthState("authenticated");
+      } else if (savedToken) {
+        // Has token — verify it; if valid, skip password
+        const res = await fetch(`/api/manage?token=${savedToken}`);
+        if (res.ok) {
+          setAuthState("authenticated");
+        } else {
+          localStorage.removeItem("fwh_token");
+          setToken(null);
+          setAuthState("need-password");
+        }
       } else {
         setAuthState("need-password");
       }
@@ -175,6 +187,8 @@ export default function Home() {
     fwdContent: string,
     itemId: string,
     currentToken: string | null,
+    fwdSourceUrl?: string,
+    syncCollectionId?: string,
   ) => {
     interface FwdData {
       title?: string;
@@ -204,6 +218,7 @@ export default function Home() {
     const widgetMetas: Array<{
       id?: string; title?: string; description?: string;
       version?: string; author?: string; requiredVersion?: string;
+      source_url?: string;
     }> = [];
 
     for (let i = 0; i < fwd.widgets.length; i++) {
@@ -227,6 +242,7 @@ export default function Home() {
         widgetMetas.push({
           id: widget.id, title: widget.title, description: widget.description,
           version: widget.version, author: widget.author, requiredVersion: widget.requiredVersion,
+          source_url: widget.url,
         });
       } catch (e) {
         setFiles((prev) => prev.map((f) =>
@@ -247,6 +263,11 @@ export default function Home() {
     if (fwd.description) formData.append("description", fwd.description);
     if (fwd.icon) formData.append("icon", fwd.icon);
     formData.append("widget_meta", JSON.stringify(widgetMetas));
+    if (fwdSourceUrl) formData.append("source_url", fwdSourceUrl);
+    if (syncCollectionId) {
+      formData.append("sync", "true");
+      formData.append("collection_id", syncCollectionId);
+    }
 
     try {
       const res = await fetch("/api/upload", { method: "POST", body: formData });
@@ -432,7 +453,7 @@ export default function Home() {
         setFiles((prev) => prev.map((f) =>
           f.id === itemId ? { ...f, type: "fwd" as const, status: "processing" as const } : f
         ));
-        await processFwdInBrowser(text, itemId, localStorage.getItem("fwh_token"));
+        await processFwdInBrowser(text, itemId, localStorage.getItem("fwh_token"), url);
       } else {
         // Single .js file - upload to server
         setFiles((prev) => prev.map((f) =>
@@ -444,6 +465,7 @@ export default function Home() {
         formData.append("files", file);
         const currentToken = localStorage.getItem("fwh_token");
         if (currentToken) formData.append("token", currentToken);
+        formData.append("source_url", url);
 
         const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
         const data = await uploadRes.json();
@@ -669,19 +691,58 @@ export default function Home() {
             )}
 
             {!collectionsLoading && collections.length === 0 && (
-              <div className="text-center py-8 text-slate-400 text-sm">暂无合集</div>
+              <div className="text-center py-8 text-slate-400 text-sm">暂无内容</div>
             )}
 
-            {collections.map((col) => (
-              <CollectionSection
-                key={col.id}
-                collection={col}
-                token={token!}
-                onDeleteModule={handleDeleteModule}
-                onDeleteCollection={() => handleDeleteCollection(col.slug, col.title)}
-                onRefresh={fetchCollections}
-              />
-            ))}
+            {(() => {
+              const standaloneCollections = collections.filter((c) => c.modules.length <= 1 && !c.source_url);
+              const multiCollections = collections.filter((c) => c.modules.length > 1 || !!c.source_url);
+              return (
+                <>
+                  {multiCollections.map((col) => (
+                    <CollectionSection
+                      key={col.id}
+                      collection={col}
+                      token={token!}
+                      onDeleteModule={handleDeleteModule}
+                      onDeleteCollection={() => handleDeleteCollection(col.slug, col.title)}
+                      onRefresh={fetchCollections}
+                    />
+                  ))}
+                  {standaloneCollections.length > 0 && (
+                    <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                      <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/50">
+                        <h3 className="font-semibold text-slate-800">独立模块</h3>
+                      </div>
+                      <div className="divide-y divide-slate-100">
+                        {standaloneCollections.map((col) => {
+                          const mod = col.modules[0];
+                          if (!mod) return (
+                            <div key={col.id} className="px-6 py-3 flex items-center justify-between gap-4 hover:bg-slate-50 transition-colors group">
+                              <div className="flex items-center gap-3 min-w-0">
+                                <span className="text-sm text-slate-400">空合集: {col.title}</span>
+                              </div>
+                              <button onClick={() => handleDeleteCollection(col.slug, col.title)} className="text-xs text-slate-400 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all">删除</button>
+                            </div>
+                          );
+                          return (
+                            <StandaloneModuleRow
+                              key={mod.id}
+                              module={mod}
+                              collection={col}
+                              token={token!}
+                              onDeleteModule={handleDeleteModule}
+                              onDeleteCollection={() => handleDeleteCollection(col.slug, col.title)}
+                              onRefresh={fetchCollections}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
       </div>
@@ -709,6 +770,105 @@ function CopyButton({ text, label }: { text: string; label: string }) {
   );
 }
 
+function StandaloneModuleRow({ module: mod, collection, token, onDeleteModule, onDeleteCollection, onRefresh }: {
+  module: Module;
+  collection: Collection;
+  token: string;
+  onDeleteModule: (id: string) => void;
+  onDeleteCollection: () => void;
+  onRefresh: () => void;
+}) {
+  const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [syncingModule, setSyncingModule] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState(false);
+  const rawUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/api/modules/${mod.id}/raw`;
+
+  const handleReplace = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setReplacingId(mod.id);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const res = await fetch(`/api/modules/${mod.id}?token=${token}`, { method: "PUT", body: formData });
+      if (res.ok) onRefresh();
+    } finally {
+      setReplacingId(null);
+      e.target.value = "";
+    }
+  };
+
+  const handleSyncModule = async () => {
+    if (!mod.source_url) return;
+    if (!confirm("确定从原地址重新同步此模块？")) return;
+    setSyncingModule(true);
+    try {
+      const res = await fetch(mod.source_url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const fname = mod.source_url.split("/").pop() || "widget.js";
+      const file = new File([blob], fname, { type: "application/javascript" });
+      const formData = new FormData();
+      formData.append("file", file);
+      const putRes = await fetch(`/api/modules/${mod.id}?token=${token}`, { method: "PUT", body: formData });
+      if (putRes.ok) onRefresh();
+    } catch (e) {
+      alert(`同步失败: ${(e as Error).message}`);
+    } finally {
+      setSyncingModule(false);
+    }
+  };
+
+  return (
+    <div className="px-6 py-3 flex items-center justify-between gap-4 hover:bg-slate-50 transition-colors group">
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="p-2 rounded-lg bg-amber-50 text-amber-600 flex-shrink-0">
+          <FileCode className="w-4 h-4" />
+        </div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="font-medium text-sm text-slate-800 truncate">{mod.title}</span>
+            {mod.version && <span className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{mod.version}</span>}
+            {mod.is_encrypted ? <span className="text-xs bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded border border-purple-100">加密</span> : null}
+          </div>
+          <div className="flex items-center gap-2 mt-0.5">
+            <p className="text-xs text-slate-400">{mod.filename} · {mod.file_size < 1024 ? `${mod.file_size} B` : `${(mod.file_size / 1024).toFixed(1)} KB`}</p>
+            <div className="flex items-center bg-slate-100 rounded px-1.5 py-0.5 max-w-[260px]">
+              <input type="text" readOnly value={rawUrl} className="bg-transparent text-xs text-slate-500 w-full focus:outline-none truncate font-mono" />
+              <button
+                onClick={() => { navigator.clipboard.writeText(rawUrl); setCopiedUrl(true); setTimeout(() => setCopiedUrl(false), 2000); }}
+                className={`p-0.5 rounded transition-all flex-shrink-0 ${copiedUrl ? "text-green-600" : "text-slate-400 hover:text-slate-600"}`}
+              >
+                {copiedUrl ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 flex-shrink-0">
+        <input type="file" accept=".js" className="hidden" id={`replace-s-${mod.id}`} onChange={handleReplace} />
+        <button
+          disabled={replacingId === mod.id}
+          onClick={() => document.getElementById(`replace-s-${mod.id}`)?.click()}
+          className="text-xs text-indigo-600 hover:text-indigo-800 transition-colors disabled:opacity-50"
+        >
+          {replacingId === mod.id ? "上传中..." : "更新"}
+        </button>
+        {mod.source_url && (
+          <button
+            disabled={syncingModule}
+            onClick={handleSyncModule}
+            className="text-xs text-emerald-600 hover:text-emerald-800 transition-colors disabled:opacity-50"
+          >
+            {syncingModule ? "同步中..." : "同步"}
+          </button>
+        )}
+        <button onClick={() => { onDeleteModule(mod.id); onDeleteCollection(); }} className="text-xs text-slate-400 hover:text-red-500 transition-colors">删除</button>
+      </div>
+    </div>
+  );
+}
+
 function CollectionSection({ collection, token, onDeleteModule, onDeleteCollection, onRefresh }: {
   collection: Collection;
   token: string;
@@ -719,6 +879,10 @@ function CollectionSection({ collection, token, onDeleteModule, onDeleteCollecti
   const [copiedFwd, setCopiedFwd] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [replacingId, setReplacingId] = useState<string | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncingModuleId, setSyncingModuleId] = useState<string | null>(null);
+  const [moduleUrlInput, setModuleUrlInput] = useState("");
+  const [addingByUrl, setAddingByUrl] = useState(false);
 
   const handleReplace = async (moduleId: string, e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -732,6 +896,112 @@ function CollectionSection({ collection, token, onDeleteModule, onDeleteCollecti
     } finally {
       setReplacingId(null);
       e.target.value = "";
+    }
+  };
+
+  const handleSyncCollection = async () => {
+    if (!collection.source_url) return;
+    if (!confirm("确定从原地址重新同步此合集？")) return;
+    setSyncing(true);
+    try {
+      const res = await fetch(collection.source_url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const text = await res.text();
+      const fwd = JSON.parse(text);
+      if (!fwd.widgets || !Array.isArray(fwd.widgets)) throw new Error("Invalid .fwd format");
+
+      const downloadedFiles: File[] = [];
+      const widgetMetas: Array<{ id?: string; title?: string; description?: string; version?: string; author?: string; requiredVersion?: string; source_url?: string }> = [];
+
+      for (const widget of fwd.widgets) {
+        const fname = widget.url.split("/").pop() || "widget.js";
+        const dlRes = await fetch(widget.url);
+        if (!dlRes.ok) throw new Error(`Failed to download ${fname}`);
+        const blob = await dlRes.blob();
+        downloadedFiles.push(new File([blob], fname, { type: "application/javascript" }));
+        widgetMetas.push({
+          id: widget.id, title: widget.title, description: widget.description,
+          version: widget.version, author: widget.author, requiredVersion: widget.requiredVersion,
+          source_url: widget.url,
+        });
+      }
+
+      const formData = new FormData();
+      downloadedFiles.forEach((file) => formData.append("files", file));
+      formData.append("token", token);
+      formData.append("collection_id", collection.id);
+      formData.append("sync", "true");
+      formData.append("source_url", collection.source_url);
+      formData.append("widget_meta", JSON.stringify(widgetMetas));
+      if (fwd.title) formData.append("title", fwd.title);
+      if (fwd.description) formData.append("description", fwd.description);
+      if (fwd.icon) formData.append("icon", fwd.icon);
+
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      if (!uploadRes.ok) {
+        const data = await uploadRes.json();
+        alert(data.error || "同步失败");
+        return;
+      }
+      onRefresh();
+    } catch (e) {
+      alert(`同步失败: ${(e as Error).message}`);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const handleSyncModule = async (mod: Module) => {
+    if (!mod.source_url) return;
+    if (!confirm("确定从原地址重新同步此模块？")) return;
+    setSyncingModuleId(mod.id);
+    try {
+      const res = await fetch(mod.source_url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const fname = mod.source_url.split("/").pop() || "widget.js";
+      const file = new File([blob], fname, { type: "application/javascript" });
+      const formData = new FormData();
+      formData.append("file", file);
+      const putRes = await fetch(`/api/modules/${mod.id}?token=${token}`, { method: "PUT", body: formData });
+      if (!putRes.ok) {
+        const data = await putRes.json();
+        alert(data.error || "同步失败");
+        return;
+      }
+      onRefresh();
+    } catch (e) {
+      alert(`同步失败: ${(e as Error).message}`);
+    } finally {
+      setSyncingModuleId(null);
+    }
+  };
+
+  const handleAddModuleByUrl = async () => {
+    const url = moduleUrlInput.trim();
+    if (!url) return;
+    try { new URL(url); } catch { alert("请输入有效的 URL"); return; }
+    setAddingByUrl(true);
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const fname = url.split("/").pop() || "widget.js";
+      const file = new File([blob], fname, { type: "application/javascript" });
+      const formData = new FormData();
+      formData.append("files", file);
+      formData.append("token", token);
+      formData.append("collection_id", collection.id);
+      formData.append("source_url", url);
+      const uploadRes = await fetch("/api/upload", { method: "POST", body: formData });
+      if (uploadRes.ok) {
+        setModuleUrlInput("");
+        onRefresh();
+      }
+    } catch (e) {
+      alert(`添加失败: ${(e as Error).message}`);
+    } finally {
+      setAddingByUrl(false);
     }
   };
 
@@ -772,6 +1042,11 @@ function CollectionSection({ collection, token, onDeleteModule, onDeleteCollecti
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <span className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded-md">{collection.modules.length} 个模块</span>
+            {collection.source_url && (
+              <button onClick={handleSyncCollection} disabled={syncing} className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-colors disabled:opacity-50" title="从源地址同步">
+                <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} />
+              </button>
+            )}
             <button onClick={onDeleteCollection} className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="删除合集">
               <Trash2 className="w-4 h-4" />
             </button>
@@ -820,6 +1095,15 @@ function CollectionSection({ collection, token, onDeleteModule, onDeleteCollecti
               >
                 {replacingId === mod.id ? "上传中..." : "更新版本"}
               </button>
+              {mod.source_url && (
+                <button
+                  disabled={syncingModuleId === mod.id}
+                  onClick={() => handleSyncModule(mod)}
+                  className="text-xs text-emerald-600 hover:text-emerald-800 transition-colors disabled:opacity-50"
+                >
+                  {syncingModuleId === mod.id ? "同步中..." : "同步"}
+                </button>
+              )}
               <button
                 onClick={() => onDeleteModule(mod.id)}
                 className="text-xs text-slate-400 hover:text-red-500 transition-colors"
@@ -835,16 +1119,35 @@ function CollectionSection({ collection, token, onDeleteModule, onDeleteCollecti
       </div>
 
       {/* Add more modules */}
-      <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/30">
+      <div className="px-6 py-3 border-t border-slate-100 bg-slate-50/30 flex items-center gap-3">
         <input type="file" accept=".js" multiple className="hidden" id={`upload-${collection.id}`} onChange={handleUploadMore} />
         <button
           disabled={isUploading}
           onClick={() => document.getElementById(`upload-${collection.id}`)?.click()}
-          className="flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 transition-colors disabled:opacity-50"
+          className="flex items-center gap-2 text-sm text-slate-500 hover:text-indigo-600 transition-colors disabled:opacity-50 flex-shrink-0"
         >
           {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
           {isUploading ? "上传中..." : "添加模块"}
         </button>
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          <input
+            type="text"
+            value={moduleUrlInput}
+            onChange={(e) => setModuleUrlInput(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Enter") handleAddModuleByUrl(); }}
+            placeholder="或输入 .js URL 添加"
+            className="flex-1 min-w-0 text-xs text-slate-600 placeholder:text-slate-400 bg-transparent border border-slate-200 rounded-md px-2 py-1.5 focus:outline-none focus:border-indigo-400"
+          />
+          {moduleUrlInput.trim() && (
+            <button
+              onClick={handleAddModuleByUrl}
+              disabled={addingByUrl}
+              className="text-xs text-white bg-indigo-600 hover:bg-indigo-700 px-2.5 py-1.5 rounded-md disabled:opacity-50 flex-shrink-0"
+            >
+              {addingByUrl ? "添加中..." : "添加"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

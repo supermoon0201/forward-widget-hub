@@ -28,7 +28,7 @@ export async function GET(request: NextRequest) {
   const result = [];
   for (const col of collections as Record<string, unknown>[]) {
     const modules = await db.prepare(
-      "SELECT id, filename, widget_id, title, description, version, author, file_size, is_encrypted, created_at FROM modules WHERE collection_id = ? ORDER BY created_at"
+      "SELECT id, filename, widget_id, title, description, version, author, file_size, is_encrypted, source_url, created_at FROM modules WHERE collection_id = ? ORDER BY created_at"
     ).all(col.id);
 
     result.push({ ...col, fwdUrl: `${siteUrl}/api/collections/${col.slug}/fwd`, pageUrl: `${siteUrl}/c/${col.slug}`, modules });

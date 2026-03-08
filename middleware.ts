@@ -27,6 +27,9 @@ export async function middleware(request: NextRequest) {
   const password = process.env.ACCESS_PASSWORD;
   if (!password) return NextResponse.next();
 
+  // /api/manage and /api/upload have their own token-based auth
+  if (path === "/api/manage" || path === "/api/upload") return NextResponse.next();
+
   const cookie = request.cookies.get("fwh_access")?.value;
   const hash = await sha256(password);
   if (cookie === hash) return NextResponse.next();

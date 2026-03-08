@@ -45,6 +45,8 @@ CREATE INDEX IF NOT EXISTS idx_users_token_prefix ON users(token_prefix);
 // Migration for existing databases that lack the required_version column
 export const MIGRATIONS = [
   `ALTER TABLE modules ADD COLUMN required_version TEXT;`,
+  `ALTER TABLE collections ADD COLUMN source_url TEXT;`,
+  `ALTER TABLE modules ADD COLUMN source_url TEXT;`,
 ];
 
 export function applyMigrations(exec: (sql: string) => void) {
