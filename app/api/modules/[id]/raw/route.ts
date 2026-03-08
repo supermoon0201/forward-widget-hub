@@ -26,7 +26,7 @@ export async function GET(
   return new NextResponse(new Uint8Array(content), {
     headers: {
       "Content-Type": contentType,
-      "Content-Disposition": `inline; filename="${mod.filename}"`,
+      "Content-Disposition": `inline; filename="${encodeURIComponent(mod.filename)}"; filename*=UTF-8''${encodeURIComponent(mod.filename)}`,
       "Cache-Control": "public, max-age=3600",
       "Vary": "User-Agent",
     },
