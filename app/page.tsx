@@ -223,7 +223,8 @@ export default function Home() {
 
     for (let i = 0; i < fwd.widgets.length; i++) {
       const widget = fwd.widgets[i];
-      const fname = widget.url.split("/").pop() || "widget.js";
+      let fname = widget.url.split("/").pop() || "widget.js";
+      if (!fname.endsWith(".js")) fname += ".js";
 
       setFiles((prev) => prev.map((f) =>
         f.id === itemId ? {
@@ -460,7 +461,8 @@ export default function Home() {
           f.id === itemId ? { ...f, progress: 50, processingDetail: "正在上传..." } : f
         ));
         const blob = new Blob([arrayBuffer], { type: "application/javascript" });
-        const file = new File([blob], filename);
+        const jsFilename = filename.endsWith(".js") ? filename : filename + ".js";
+        const file = new File([blob], jsFilename);
         const formData = new FormData();
         formData.append("files", file);
         const currentToken = localStorage.getItem("fwh_token");
@@ -621,7 +623,7 @@ export default function Home() {
             value={urlInput}
             onChange={(e) => setUrlInput(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter") handleUrl(); }}
-            placeholder="输入 .js 或 .fwd 文件的 URL 直接转存"
+            placeholder="输入 Widget URL 直接转存"
             className="flex-1 text-sm text-slate-700 placeholder:text-slate-400 focus:outline-none bg-transparent"
           />
           <button
@@ -914,7 +916,8 @@ function CollectionSection({ collection, token, onDeleteModule, onDeleteCollecti
       const widgetMetas: Array<{ id?: string; title?: string; description?: string; version?: string; author?: string; requiredVersion?: string; source_url?: string }> = [];
 
       for (const widget of fwd.widgets) {
-        const fname = widget.url.split("/").pop() || "widget.js";
+        let fname = widget.url.split("/").pop() || "widget.js";
+        if (!fname.endsWith(".js")) fname += ".js";
         const dlRes = await fetch(widget.url);
         if (!dlRes.ok) throw new Error(`Failed to download ${fname}`);
         const blob = await dlRes.blob();
