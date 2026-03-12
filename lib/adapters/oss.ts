@@ -20,10 +20,12 @@ export function createOssStore(): Store {
 
   return {
     async save(collectionId, filename, content) {
-      const key = ossKey(collectionId, filename);
+      const versionedFilename = `${Date.now()}_${filename}`;
+      const key = `${prefix}/${collectionId}/${versionedFilename}`;
       await client.put(key, Buffer.from(content), {
         headers: { "Cache-Control": "no-cache" },
       });
+      return versionedFilename;
     },
     async read(collectionId, filename) {
       const key = ossKey(collectionId, filename);

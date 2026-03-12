@@ -14,8 +14,8 @@ export async function PUT(
   const db = await getBackendDb();
 
   const mod = (await db
-    .prepare("SELECT id, collection_id, filename FROM modules WHERE id = ?")
-    .get(id)) as { id: string; collection_id: string; filename: string } | undefined;
+    .prepare("SELECT id, collection_id, filename, oss_key FROM modules WHERE id = ?")
+    .get(id)) as { id: string; collection_id: string; filename: string; oss_key: string | null } | undefined;
 
   if (!mod) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
@@ -25,12 +25,12 @@ export async function PUT(
 
   const buf = Buffer.from(await file.arrayBuffer());
   const store = await getBackendStore();
-  await store.save(mod.collection_id, mod.filename, buf);
+  const ossKey = await store.save(mod.collection_id, mod.filename, buf);
 
   const meta = parseWidgetMetadata(buf.toString("utf-8"));
   await db.prepare(
-    "UPDATE modules SET file_size = ?, title = ?, version = ?, author = ?, description = ?, updated_at = unixepoch() WHERE id = ?"
-  ).run(buf.length, meta?.title || mod.filename, meta?.version || null, meta?.author || null, meta?.description || null, id);
+    "UPDATE modules SET file_size = ?, title = ?, version = ?, author = ?, description = ?, oss_key = ?, updated_at = unixepoch() WHERE id = ?"
+  ).run(buf.length, meta?.title || mod.filename, meta?.version || null, meta?.author || null, meta?.description || null, ossKey || null, id);
 
   return NextResponse.json({ success: true });
 }
@@ -46,8 +46,8 @@ export async function DELETE(
   const db = await getBackendDb();
 
   const mod = (await db
-    .prepare("SELECT id, collection_id, filename FROM modules WHERE id = ?")
-    .get(id)) as { id: string; collection_id: string; filename: string } | undefined;
+    .prepare("SELECT id, collection_id, filename, oss_key FROM modules WHERE id = ?")
+    .get(id)) as { id: string; collection_id: string; filename: string; oss_key: string | null } | undefined;
 
   if (!mod) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
@@ -55,7 +55,7 @@ export async function DELETE(
 
   await db.prepare("DELETE FROM modules WHERE id = ?").run(id);
   const store = await getBackendStore();
-  await store.remove(mod.collection_id, mod.filename);
+  await store.remove(mod.collection_id, mod.oss_key || mod.filename);
 
   return NextResponse.json({ success: true });
 }

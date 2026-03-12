@@ -10,7 +10,7 @@ export interface Db {
 }
 
 export interface Store {
-  save(collectionId: string, filename: string, content: Buffer | Uint8Array): Promise<void>;
+  save(collectionId: string, filename: string, content: Buffer | Uint8Array): Promise<string | void>;
   read(collectionId: string, filename: string): Promise<Buffer | null>;
   remove(collectionId: string, filename: string): Promise<void>;
   removeCollection(collectionId: string): Promise<void>;

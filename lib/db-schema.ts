@@ -47,6 +47,7 @@ export const MIGRATIONS = [
   `ALTER TABLE modules ADD COLUMN required_version TEXT;`,
   `ALTER TABLE collections ADD COLUMN source_url TEXT;`,
   `ALTER TABLE modules ADD COLUMN source_url TEXT;`,
+  `ALTER TABLE modules ADD COLUMN oss_key TEXT;`,
 ];
 
 export function applyMigrations(exec: (sql: string) => void) {

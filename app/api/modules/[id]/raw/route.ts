@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getBackendDb, getBackendStore } from "@/lib/backend";
 
-interface ModuleRow { id: string; collection_id: string; filename: string; is_encrypted: number; updated_at: number | null; }
+interface ModuleRow { id: string; collection_id: string; filename: string; is_encrypted: number; oss_key: string | null; }
 
 export async function GET(
   request: NextRequest,
@@ -14,19 +14,19 @@ export async function GET(
 
   const { id } = await params;
   const db = await getBackendDb();
-  const mod = await db.prepare("SELECT id, collection_id, filename, is_encrypted, updated_at FROM modules WHERE id = ?").get(id) as ModuleRow | undefined;
+  const mod = await db.prepare("SELECT id, collection_id, filename, is_encrypted, oss_key FROM modules WHERE id = ?").get(id) as ModuleRow | undefined;
   if (!mod) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const store = await getBackendStore();
+  const storageKey = mod.oss_key || mod.filename;
+  const cdnUrl = store.getUrl?.(mod.collection_id, storageKey);
 
-  // If store supports CDN URLs, redirect there
-  const cdnUrl = store.getUrl?.(mod.collection_id, mod.filename);
   if (cdnUrl) {
-    const versionedUrl = mod.updated_at ? `${cdnUrl}?v=${mod.updated_at}` : cdnUrl;
-    return NextResponse.redirect(versionedUrl, 302);
+    return NextResponse.redirect(cdnUrl, 302);
   }
 
-  const content = await store.read(mod.collection_id, mod.filename);
+  // Fallback: serve directly for backends without CDN
+  const content = await store.read(mod.collection_id, storageKey);
   if (!content) return NextResponse.json({ error: "File not found" }, { status: 404 });
 
   const contentType = mod.is_encrypted ? "application/octet-stream" : "application/javascript; charset=utf-8";
@@ -35,7 +35,7 @@ export async function GET(
     headers: {
       "Content-Type": contentType,
       "Content-Disposition": `inline; filename="${encodeURIComponent(mod.filename)}"; filename*=UTF-8''${encodeURIComponent(mod.filename)}`,
-      "Cache-Control": "public, max-age=3600",
+      "Cache-Control": "no-cache",
       "Vary": "User-Agent",
     },
   });

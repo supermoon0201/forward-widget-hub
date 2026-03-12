@@ -158,7 +158,8 @@ async function downloadAndStoreWidget(
     dl.buffer.length, encrypted ? 1 : 0,
     srcUrl
   );
-  await store.save(collectionId, dl.filename, dl.buffer);
+  const ossKey = await store.save(collectionId, dl.filename, dl.buffer);
+  if (ossKey) await db.prepare("UPDATE modules SET oss_key = ? WHERE id = ?").run(ossKey, moduleId);
   return {
     id: moduleId,
     filename: dl.filename,
@@ -283,7 +284,8 @@ export async function POST(request: NextRequest) {
         `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(moduleId, collectionId, filename, meta?.id || null, meta?.title || filename.replace(".js", ""), meta?.description || "", meta?.version || null, meta?.author || null, meta?.requiredVersion || null, buffer.length, encrypted ? 1 : 0, remoteUrl);
-      await store.save(collectionId, filename, buffer);
+      const ossKey = await store.save(collectionId, filename, buffer);
+      if (ossKey) await db.prepare("UPDATE modules SET oss_key = ? WHERE id = ?").run(ossKey, moduleId);
 
       return NextResponse.json({
         ...resultBase, fwdUrl,
@@ -359,7 +361,8 @@ export async function POST(request: NextRequest) {
               `INSERT INTO modules (id, collection_id, filename, widget_id, title, description, version, author, required_version, file_size, is_encrypted, source_url)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
             ).run(moduleId, collectionId, file.name, meta?.id || null, meta?.title || file.name.replace(".js", ""), meta?.description || "", meta?.version || null, meta?.author || null, meta?.requiredVersion || null, file.size, encrypted ? 1 : 0, wm?.source_url || null);
-            await store.save(collectionId, file.name, buffer);
+            const ossKey2 = await store.save(collectionId, file.name, buffer);
+            if (ossKey2) await db.prepare("UPDATE modules SET oss_key = ? WHERE id = ?").run(ossKey2, moduleId);
             allModules.push({ id: moduleId, filename: file.name, title: meta?.title || file.name, version: meta?.version, encrypted });
           }
         }
@@ -383,7 +386,7 @@ export async function POST(request: NextRequest) {
       }
 
       // Get existing modules for matching
-      const existingModules = await db.prepare("SELECT id, filename, widget_id, source_url FROM modules WHERE collection_id = ?").all(collectionId) as Array<{ id: string; filename: string; widget_id: string | null; source_url: string | null }>;
+      const existingModules = await db.prepare("SELECT id, filename, widget_id, source_url, oss_key FROM modules WHERE collection_id = ?").all(collectionId) as Array<{ id: string; filename: string; widget_id: string | null; source_url: string | null; oss_key: string | null }>;
 
       const allModules: ModuleInfo[] = [];
       for (let i = 0; i < jsFiles.length; i++) {
@@ -405,9 +408,10 @@ export async function POST(request: NextRequest) {
         );
 
         if (matched) {
+          const ossKey = await store.save(collectionId, filename, buffer);
           // UPDATE existing module
           await db.prepare(
-            `UPDATE modules SET filename = ?, widget_id = ?, title = ?, description = ?, version = ?, author = ?, required_version = ?, file_size = ?, is_encrypted = ?, source_url = COALESCE(?, source_url), updated_at = unixepoch() WHERE id = ?`
+            `UPDATE modules SET filename = ?, widget_id = ?, title = ?, description = ?, version = ?, author = ?, required_version = ?, file_size = ?, is_encrypted = ?, source_url = COALESCE(?, source_url), oss_key = ?, updated_at = unixepoch() WHERE id = ?`
           ).run(filename,
             wm?.id || meta?.id || matched.widget_id,
             wm?.title || meta?.title || filename.replace(".js", ""),
@@ -417,8 +421,8 @@ export async function POST(request: NextRequest) {
             wm?.requiredVersion || meta?.requiredVersion || null,
             file.size, encrypted ? 1 : 0,
             wmSourceUrl,
+            ossKey || null,
             matched.id);
-          await store.save(collectionId, filename, buffer);
           allModules.push({ id: matched.id, filename, title: wm?.title || meta?.title || filename, version: wm?.version || meta?.version, encrypted, source_url: wmSourceUrl || matched.source_url || undefined });
         } else {
           // INSERT new module
@@ -435,7 +439,8 @@ export async function POST(request: NextRequest) {
             wm?.requiredVersion || meta?.requiredVersion || null,
             file.size, encrypted ? 1 : 0,
             wmSourceUrl);
-          await store.save(collectionId, filename, buffer);
+          const ossKey = await store.save(collectionId, filename, buffer);
+          if (ossKey) await db.prepare("UPDATE modules SET oss_key = ? WHERE id = ?").run(ossKey, moduleId);
           allModules.push({ id: moduleId, filename, title: wm?.title || meta?.title || filename, version: wm?.version || meta?.version, encrypted, source_url: wmSourceUrl || undefined });
         }
       }
@@ -486,7 +491,8 @@ export async function POST(request: NextRequest) {
         file.size, encrypted ? 1 : 0,
         wm?.source_url || sourceUrl || null);
 
-      await store.save(collectionId, filename, buffer);
+      const ossKey = await store.save(collectionId, filename, buffer);
+      if (ossKey) await db.prepare("UPDATE modules SET oss_key = ? WHERE id = ?").run(ossKey, moduleId);
       allModules.push({ id: moduleId, filename, title: wm?.title || meta?.title || filename, version: wm?.version || meta?.version, encrypted });
     }
 
