@@ -13,35 +13,54 @@ interface D1Database {
   exec(sql: string): Promise<unknown>;
 }
 
-let _migrated = false;
+let _initPromise: Promise<void> | null = null;
+
+function isAlreadyExistsError(e: unknown): boolean {
+  const msg = String((e as { message?: string })?.message ?? e);
+  return /already exists/i.test(msg);
+}
+
+async function ensureSchema(d1: D1Database): Promise<void> {
+  try { await d1.exec(SCHEMA); } catch (e) {
+    if (!isAlreadyExistsError(e)) throw e;
+  }
+  for (const sql of MIGRATIONS) {
+    try { await d1.exec(sql); } catch (e) {
+      if (!isAlreadyExistsError(e)) throw e;
+    }
+  }
+}
 
 export function createD1Db(binding: unknown): Db {
   const d1 = binding as D1Database;
 
-  if (!_migrated) {
-    _migrated = true;
-    d1.exec(SCHEMA).catch(() => {/* tables already exist */});
-    for (const sql of MIGRATIONS) {
-      d1.exec(sql).catch(() => {/* column already exists */});
-    }
+  if (!_initPromise) {
+    _initPromise = ensureSchema(d1).catch((e) => {
+      _initPromise = null; // allow retry on next request
+      throw e;
+    });
   }
+  const ready = _initPromise;
 
   return {
     prepare(sql: string): DbStatement {
       return {
         async get<T>(...params: unknown[]): Promise<T | undefined> {
+          await ready;
           const stmt = d1.prepare(sql);
           const bound = params.length > 0 ? stmt.bind(...params) : stmt;
           const result = await bound.first<T>();
           return result ?? undefined;
         },
         async all<T>(...params: unknown[]): Promise<T[]> {
+          await ready;
           const stmt = d1.prepare(sql);
           const bound = params.length > 0 ? stmt.bind(...params) : stmt;
           const { results } = await bound.all<T>();
           return results;
         },
         async run(...params: unknown[]): Promise<void> {
+          await ready;
           const stmt = d1.prepare(sql);
           const bound = params.length > 0 ? stmt.bind(...params) : stmt;
           await bound.run();
@@ -49,6 +68,7 @@ export function createD1Db(binding: unknown): Db {
       };
     },
     async exec(sql: string): Promise<void> {
+      await ready;
       await d1.exec(sql);
     },
   };
