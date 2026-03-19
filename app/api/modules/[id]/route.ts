@@ -42,11 +42,11 @@ export async function PUT(
   }
 
   // Save file (overwrite)
-  await store.save(mod.collection_id, mod.filename, buffer);
+  const ossKey = await store.save(mod.collection_id, mod.filename, buffer);
 
   // Update metadata
   const encrypted = isEncrypted(buffer);
-  const updates: Record<string, unknown> = { file_size: buffer.length, is_encrypted: encrypted ? 1 : 0 };
+  const updates: Record<string, unknown> = { file_size: buffer.length, is_encrypted: encrypted ? 1 : 0, oss_key: ossKey || null, updated_at: Math.floor(Date.now() / 1000) };
 
   if (!encrypted) {
     const meta = parseWidgetMetadata(buffer.toString("utf-8"));
@@ -84,14 +84,14 @@ export async function DELETE(
   const db = await getBackendDb();
   const store = await getBackendStore();
   const mod = await db.prepare(
-    `SELECT m.id, m.collection_id, m.filename, c.user_id
+    `SELECT m.id, m.collection_id, m.filename, m.oss_key, c.user_id
      FROM modules m JOIN collections c ON m.collection_id = c.id WHERE m.id = ?`
-  ).get(id) as { id: string; collection_id: string; filename: string; user_id: string } | undefined;
+  ).get(id) as { id: string; collection_id: string; filename: string; oss_key: string | null; user_id: string } | undefined;
 
   if (!mod || mod.user_id !== auth.userId) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   await db.prepare("DELETE FROM modules WHERE id = ?").run(id);
-  await store.remove(mod.collection_id, mod.filename);
+  await store.remove(mod.collection_id, mod.oss_key || mod.filename);
 
   return NextResponse.json({ success: true });
 }
