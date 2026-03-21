@@ -60,8 +60,9 @@ export async function PUT(
       : "jpg";
     const buffer = Buffer.from(await iconFile.arrayBuffer());
     const iconFilename = `_icon.${ext}`;
-    await store.save(collection.id, iconFilename, buffer);
-    const cdnUrl = store.getUrl?.(collection.id, iconFilename);
+    const savedKey = await store.save(collection.id, iconFilename, buffer);
+    const actualKey = savedKey || iconFilename;
+    const cdnUrl = store.getUrl?.(collection.id, actualKey);
     const proto = request.headers.get("x-forwarded-proto") || "https";
     const host = request.headers.get("host") || request.nextUrl.host;
     iconUrl = cdnUrl || `${proto}://${host}/api/collections/${slug}/icon`;

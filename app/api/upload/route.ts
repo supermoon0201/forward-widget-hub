@@ -121,8 +121,9 @@ async function downloadAndStoreIcon(
         : "jpg";
       const buf = Buffer.from(await res.arrayBuffer());
       const iconFilename = `_icon.${ext}`;
-      await store.save(collectionId, iconFilename, buf);
-      const cdnUrl = store.getUrl?.(collectionId, iconFilename);
+      const savedKey = await store.save(collectionId, iconFilename, buf);
+      const actualKey = savedKey || iconFilename;
+      const cdnUrl = store.getUrl?.(collectionId, actualKey);
       return cdnUrl || `${siteUrl}/api/collections/${slug}/icon`;
     } finally {
       clearTimeout(timeout);
