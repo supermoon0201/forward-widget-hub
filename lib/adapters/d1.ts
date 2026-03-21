@@ -21,8 +21,15 @@ function isAlreadyExistsError(e: unknown): boolean {
 }
 
 async function ensureSchema(d1: D1Database): Promise<void> {
-  try { await d1.exec(SCHEMA); } catch (e) {
-    if (!isAlreadyExistsError(e)) throw e;
+  // Split schema into individual statements — D1 exec may not handle multi-statement strings
+  const statements = SCHEMA
+    .split(";")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  for (const sql of statements) {
+    try { await d1.exec(sql + ";"); } catch (e) {
+      if (!isAlreadyExistsError(e)) throw e;
+    }
   }
   for (const sql of MIGRATIONS) {
     try { await d1.exec(sql); } catch (e) {
