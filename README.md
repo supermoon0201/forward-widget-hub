@@ -56,6 +56,10 @@ docker compose up -d
 
 启动完成后访问 http://localhost:3000 即可使用。
 
+> `./data` 目录在首次上传成功前可能是空的，这是正常现象。SQLite 数据库会在第一次写入时创建为 `./data/db.sqlite`。
+>
+> 最新镜像会在启动时自动处理 `/data` 挂载目录的权限问题，避免首次上传时报 `unable to open database file`。
+
 #### 3. 使用自定义域名
 
 如果你有域名（比如 `https://widget.example.com`），需要修改 `docker-compose.yml` 中的 `SITE_URL`，让生成的链接指向正确的地址：
@@ -78,6 +82,8 @@ services:
 ```bash
 docker compose up -d --build
 ```
+
+如果你之前已经启动过旧镜像，建议执行上面的 `--build`，让容器使用新的启动逻辑。
 
 #### 4. 配置 HTTPS（推荐）
 
@@ -111,6 +117,8 @@ data/
     └── <collection>/
         └── widget.js   # 模块文件
 ```
+
+如果宿主机目录权限非常严格，容器仍然无法写入 `./data`，可以在宿主机手动放开该目录权限后再重启容器。
 
 ## 访问密码（可选）
 
